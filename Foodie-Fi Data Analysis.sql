@@ -176,35 +176,60 @@ FROM (
 
 # Question 10: Can you further breakdown this average value into 30 day periods (i.e. 0-30 days, 31-60 days etc)
 
-WITH trial_plan AS 
-  (SELECT 
-    customer_id, 
-    start_date AS trial_date
-  FROM foodie_fi.subscriptions
-  WHERE plan_id = 0
-),
--- Filter results to customers at pro annual plan = 3
-annual_plan AS
-  (SELECT 
-    customer_id, 
-    start_date AS annual_date
-  FROM foodie_fi.subscriptions
-  WHERE plan_id = 3
-),
--- Sort values above in buckets of 12 with range of 30 days each
-bins AS 
-  (SELECT 
-    WIDTH_BUCKET(ap.annual_date - tp.trial_date, 0, 360, 12) AS     avg_days_to_upgrade
-  FROM trial_plan tp
-  JOIN annual_plan ap
-    ON tp.customer_id = ap.customer_id)
-  
-SELECT 
-  ((avg_days_to_upgrade - 1) * 30 || ' - ' ||   (avg_days_to_upgrade) * 30) || ' days' AS breakdown, 
-  COUNT(*) AS customers
-FROM bins
-GROUP BY avg_days_to_upgrade
-ORDER BY avg_days_to_upgrade; 
+-- Create Temporary Table TRIAL customers
+CREATE TEMPORARY TABLE trial_customers
+SELECT
+    customer_id,
+    plan_id,
+    start_date,
+    plan_name
+FROM (
+SELECT
+    s.customer_id,
+    s.plan_id,
+    s.start_date,
+    p.plan_name
+FROM subscriptions s
+    LEFT JOIN plans p
+        ON s.plan_id = p.plan_id
+ORDER BY 1) AS a
+WHERE plan_name = "trial";
+ 
+ 
+-- Create Temporary Table PRO Customers
+CREATE TEMPORARY TABLE pro_annual_customers
+SELECT
+    customer_id,
+    plan_id,
+    start_date,
+    plan_name
+FROM (
+SELECT
+    s.customer_id,
+    s.plan_id,
+    s.start_date,
+    p.plan_name
+FROM subscriptions s
+    LEFT JOIN plans p
+        ON s.plan_id = p.plan_id
+ORDER BY 1) AS a
+WHERE plan_name = "pro annual";
+ 
+-- Join the 2 temporary table, insert them in a inner query and calculate the average for each period
+SELECT
+    CEILING(AVG(period_0_30)) AS avg_0_30,
+    CEILING(AVG(period_31_60)) AS avg_31_60,
+    CEILING(AVG(period_61_120)) avg_61_120,
+    CEILING(AVG(period_more_than_120)) AS avg_over_120
+FROM (
+SELECT
+    CASE WHEN DATEDIFF(pro.start_date, trial.start_date) <= 30 THEN DATEDIFF(pro.start_date, trial.start_date) ELSE NULL END AS period_0_30,
+    CASE WHEN DATEDIFF(pro.start_date, trial.start_date) > 30 AND DATEDIFF(pro.start_date, trial.start_date) <= 60 THEN DATEDIFF(pro.start_date, trial.start_date) ELSE NULL END AS period_31_60,
+    CASE WHEN DATEDIFF(pro.start_date, trial.start_date) > 60 AND DATEDIFF(pro.start_date, trial.start_date) <= 120 THEN DATEDIFF(pro.start_date, trial.start_date) ELSE NULL END AS period_61_120,
+    CASE WHEN DATEDIFF(pro.start_date, trial.start_date) > 120 THEN DATEDIFF(pro.start_date, trial.start_date) ELSE NULL END AS period_more_than_120
+FROM pro_annual_customers pro
+    LEFT JOIN trial_customers trial
+        ON pro.customer_id = trial.customer_id) AS a;
 
 # Question 11: How many customers downgraded from a pro monthly to a basic monthly plan in 2020? 
 
